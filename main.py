@@ -148,7 +148,8 @@ def open_domofon(message):
         bot.send_message(message.chat.id, 'Используйте: /open <id_домофона>')
         return
 
-    response = requests.post(f'{DOMOFON_API_URL}/domofons/{domofon_id}/open', json={'phone': phone_number})
+    url = f'{DOMOFON_API_URL}domo.domofon/{domofon_id}/relay/on'
+    response = requests.post(url, headers={'x-api-key': 'SecretToken'}, json={'phone': phone_number})
 
     if response.status_code == 200:
         bot.send_message(message.chat.id, 'Дверь успешно открыта!')
