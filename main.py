@@ -1,6 +1,4 @@
-﻿from re import I
-from tkinter import TRUE
-import telebot
+﻿import telebot
 import requests
 import json
 from dotenv import load_dotenv
@@ -78,10 +76,6 @@ def add_domofons(user):
     else:
         return
 
-
-def get_tenant_id(phone_number):
-    payload = json.dumps({'phone' : phone_number})
-    response = requests.request("POST", f'{DOMOFON_API_URL}check-tenant', headers=headers, data=payload)
     if response.status_code == 200:
         return response.json()['tenant_id']
     else:
@@ -166,6 +160,8 @@ def open_domofon(message):
     else:
         error_message = response.json().get('error', 'Ошибка при открытии двери.')
         bot.send_message(message.chat.id, error_message)
+
+
 
 
 bot.polling(none_stop=True)
