@@ -75,11 +75,6 @@ def add_domofons(user):
             return
     else:
         return
-
-    if response.status_code == 200:
-        return response.json()['tenant_id']
-    else:
-        return None
     
 
 # Команда для получения списка домофонов
