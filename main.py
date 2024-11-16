@@ -63,7 +63,8 @@ def add_domofons(user):
                 if response_domofons.status_code == 200:
                     domofons = response_domofons.json()
                     for domofon in domofons:
-                        # Добавляем домофон в БД
+                        if session.query(models.Domofon).filter_by(domofon_id=domofon['id']).first():
+                            continue
                         domofon_record = models.Domofon(user_id=tenant_id, domofon_name=domofon['name'], domofon_id=domofon['id'])
                         session.add(domofon_record)
                 else:
