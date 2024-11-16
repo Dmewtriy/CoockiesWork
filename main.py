@@ -137,25 +137,38 @@ def get_camera_snapshot(message):
 # Команда для открытия домофона
 @bot.message_handler(commands=['open'])
 def open_domofon(message):
-    phone_number = getattr(message.from_user, 'phone', None)
+    user = session.query(models.User).filter_by(telegram_id=message.from_user.id).first()
+    if user is None:
+        bot.send_message(message.chat.id, 'Вы не авторизованы. Пожалуйста, отправьте свой номер телефона с помощью команды /start.')
+        return
+    tenant_id = user.tenant_id
 
-    if not phone_number:
-        bot.send_message(message.chat.id, 'Сначала авторизуйтесь с помощью /login.')
+    msg = message.text.split()
+    if len(msg) != 3:
+        bot.send_message(message.chat.id, 'Используйте: /open <id_домофона> <номер_двери>')
+        return
+    
+    domofon_id = msg[1] if len(message.text.split()) > 1 else None
+    door_id = msg[2] if len(message.text.split()) > 1 else None
+
+    if not domofon_id or not door_id:
+        bot.send_message(message.chat.id, 'Используйте: /open <id_домофона> <номер_двери>')
         return
 
-    domofon_id = message.text.split()[1] if len(message.text.split()) > 1 else None
-
-    if not domofon_id:
-        bot.send_message(message.chat.id, 'Используйте: /open <id_домофона>')
+    valid_intercom = session.query(models.Domofon).filter_by(domofon_id=domofon_id, user_id=tenant_id).first()
+    if valid_intercom is None:
+        bot.send_message(message.chat.id, 'Вам не доступен этот домофон или такого домофона не сущесвтует.')
         return
 
-    url = f'{DOMOFON_API_URL}domo.domofon/{domofon_id}/relay/on'
-    response = requests.post(url, headers={'x-api-key': 'SecretToken'}, json={'phone': phone_number})
+    payload = json.dumps({'door_id' : door_id})
+
+    url = f'{DOMOFON_API_URL}domo.domofon/{domofon_id}/open?tenant_id={tenant_id}'
+    response = requests.post(url, headers=headers, data=payload)
 
     if response.status_code == 200:
         bot.send_message(message.chat.id, 'Дверь успешно открыта!')
     else:
-        error_message = response.json().get('error', 'Ошибка при открытии двери.')
+        error_message = 'Ошибка при открытии двери.'
         bot.send_message(message.chat.id, error_message)
 
 
