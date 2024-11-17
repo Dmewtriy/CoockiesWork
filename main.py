@@ -56,7 +56,7 @@ def handle_contact(message):
     button = telebot.types.KeyboardButton("Список домофонов")
     keyboard.add(button)
     bot.send_message(message.chat.id, 'Вы успешно авторизованы!', reply_markup=keyboard)
-    help()
+    help(message)
 
 
 def get_tenant_id(phone_number):
