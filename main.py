@@ -137,19 +137,35 @@ def get_camera_snapshot(message):
 
     response = requests.request("POST", f'{DOMOFON_API_URL}domo.domofon/urlsOnType?tenant_id={tenant_id}', headers=headers, data=payload)
 
-    photo1 = response.json()[0]['jpeg']
-    photo2 = response.json()[0]['alt_jpeg']
-    
-    if not photo1 or not photo2:
+    if response.status_code != 200:
+        bot.send_message(message.chat.id, 'Ошибка получения снимков.')
+        return
+
+    photo1 = response.json()[0].get('jpeg')
+    photo2 = response.json()[0].get('alt_jpeg')
+
+    if not photo1 and not photo2:
         bot.send_message(message.from_user.id, 'У домофона нет камер.')
         return
 
-    if response.status_code == 200:
-        snapshot_url = [telebot.types.InputMediaPhoto(photo1, caption=f'Снимки с домофона id={domofon_id}'), telebot.types.InputMediaPhoto(photo2)]
-        bot.send_media_group(message.from_user.id, media=snapshot_url)
+    # Проверка изображений
+    valid_photos = []
+    if photo1 and check_image_url(photo1):
+        valid_photos.append(telebot.types.InputMediaPhoto(photo1, caption=f'Снимки с домофона id={domofon_id}'))
+    if photo2 and check_image_url(photo2):
+        valid_photos.append(telebot.types.InputMediaPhoto(photo2))
+
+    if valid_photos:
+        bot.send_media_group(message.from_user.id, media=valid_photos)
     else:
-        error_message = 'Ошибка получения снимков.'
-        bot.send_message(message.chat.id, error_message)
+        bot.send_message(message.chat.id, 'Не удалось получить действительные изображения.')
+
+
+def check_image_url(url):
+    response = requests.get(url)
+    if response.status_code != 200:
+        return None
+    return url
 
 # Команда для открытия домофона
 @bot.message_handler(commands=['open'])
