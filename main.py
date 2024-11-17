@@ -1,12 +1,10 @@
-﻿from fastapi import FastAPI, HTTPException
-import telebot
+﻿import telebot
 import requests
 import json
 from dotenv import load_dotenv
 import os
 from database import session
 import models
-from pydantic import BaseModel
 
 load_dotenv()
 
@@ -17,7 +15,6 @@ DOMOFON_API_URL = os.getenv('DOMOFON_API_URL')
 # Инициализация бота
 bot = telebot.TeleBot(TELEGRAM_API_TOKEN)
 
-app = FastAPI()
 
 headers = {'x-api-key' : 'SecretToken', 'Content-Type' : 'application/json'}
 
@@ -34,7 +31,7 @@ def start(message):
 @bot.message_handler(content_types=['contact'])
 def handle_contact(message):
     phone_number = message.contact.phone_number
-    user_already_exist = session.query(models.User).filter_by(phone_number=phone_number).first()
+    user_already_exist = session.query(models.User).filter_by(phone_number=phone_number, telegram_id=message.from_user.id).first()
     if user_already_exist is not None:
         bot.send_message(message.from_user.id, 'Вы уже зарегистрированы.')
         return
@@ -47,10 +44,14 @@ def handle_contact(message):
     user = models.User(phone_number=phone_number, tenant_id=tenant_id, telegram_id=message.from_user.id)
     session.add(user)
     session.commit()
-    bot.send_message(message.chat.id, 'Вы успешно авторизованы!')
 
-    # Получаем квартиры и домофоны
+    # Получаем домофоны
     add_domofons(user)
+    
+    keyboard = telebot.types.ReplyKeyboardMarkup(resize_keyboard=True, one_time_keyboard=True)
+    button = telebot.types.KeyboardButton("Список домофонов")
+    keyboard.add(button)
+    bot.send_message(message.chat.id, 'Вы успешно авторизованы!', reply_markup=keyboard)
 
 
 def get_tenant_id(phone_number):
@@ -65,26 +66,23 @@ def get_tenant_id(phone_number):
 def add_domofons(user):
     tenant_id = user.tenant_id
 
-    # Запрос квартир
     response_apartments = requests.get(f'{DOMOFON_API_URL}domo.apartment?tenant_id={tenant_id}', headers=headers)
 
     if response_apartments.status_code == 200:
         apartments = response_apartments.json()
         if apartments:
             for apartment in apartments:
-                # Запрос домофонов для квартиры
                 response_domofons = requests.get(f'{DOMOFON_API_URL}domo.apartment/{apartment["id"]}/domofon?tenant_id={tenant_id}', headers=headers)
                 if response_domofons.status_code == 200:
                     domofons = response_domofons.json()
                     for domofon in domofons:
-                        if session.query(models.Domofon).filter_by(domofon_id=domofon['id']).first():
+                        if session.query(models.Domofon).filter_by(domofon_id=domofon['id'], user_id=tenant_id).first():
                             continue
                         domofon_record = models.Domofon(user_id=tenant_id, domofon_name=domofon['name'], domofon_id=domofon['id'])
                         session.add(domofon_record)
                 else:
                     return
 
-            # Сохраняем все изменения в БД за один раз
             session.commit()
         else:
             return
@@ -109,7 +107,7 @@ def list_domofons(message):
             message_text += f"id = {domofon.domofon_id}: {domofon.domofon_name}\n"
         bot.send_message(message.chat.id, message_text)
     else:
-        bot.send_message(message.chat.id, 'У вас нет домофонов в базе данных.')
+        bot.send_message(message.chat.id, 'У вас нет доступных домофонов.')
 
 # Команда для получения снимка с камеры домофона
 @bot.message_handler(commands=['snapshot'])
@@ -143,7 +141,7 @@ def get_camera_snapshot(message):
         return
 
     if response.status_code == 200:
-        snapshot_url = [telebot.types.InputMediaPhoto(photo1), telebot.types.InputMediaPhoto(photo2)]
+        snapshot_url = [telebot.types.InputMediaPhoto(photo1, caption=f'Снимки с домофона id={domofon_id}'), telebot.types.InputMediaPhoto(photo2)]
         bot.send_media_group(message.from_user.id, media=snapshot_url)
     else:
         error_message = 'Ошибка получения снимка.'
@@ -181,82 +179,31 @@ def open_domofon(message):
     response = requests.post(url, headers=headers, data=payload)
 
     if response.status_code == 200:
-        bot.send_message(message.chat.id, 'Дверь успешно открыта!')
+        bot.send_message(message.chat.id, f'Домофон id = {domofon_id} успешно открыта!')
     else:
         error_message = 'Ошибка при открытии двери.'
         bot.send_message(message.chat.id, error_message)
 
 
-class CallNotification(BaseModel):
-    domofon_id: int
-    tenant_id: int
 
-@app.post("/notify_call/")
-async def notify_call(notification: CallNotification):
-    # Проверяем, существует ли домофон и доступен ли он для пользователя
-    domofon = session.query(models.Domofon).filter_by(domofon_id=notification.domofon_id, user_id=notification.tenant_id).first()
-    if not domofon:
-        raise HTTPException(status_code=404, detail="Домофон не найден или недоступен")
+# Команда помощи
+@bot.message_handler(commands=['help'])
+def help(message):
+    msg_text = ("Доступные команды:\n"
+    "/start - Начать работу с ботом\n"
+    "/help - Показать это меню помощи\n"
+    "/list - Показать список доступных домофонов\n"
+    "/open <id_домофона> <номер_двери> - Открыть указанную дверь домофона\n"
+    "/snapshot <id_домофона> - Отправить снимки с указанного домофона\n")
+    bot.send_message(message.chat.id, msg_text)
 
-    # Получаем снимок с камеры домофона
-    payload = json.dumps({'intercoms_id': [notification.domofon_id], 'media_type': ['JPEG']})
-    response = requests.post(f'{DOMOFON_API_URL}domo.domofon/urlsOnType?tenant_id={notification.tenant_id}', headers=headers, data=payload)
-
-    if response.status_code != 200:
-        raise HTTPException(status_code=500, detail="Ошибка получения снимка с камеры")
-
-    photo_url1 = response.json()[0]['jpeg']
-    photo_url2 = response.json()[0]['alt_jpeg']
-    if not photo_url1 or not photo_url2:
-        raise HTTPException(status_code=404, detail="У домофона нет камер")
-
-    # Отправляем сообщение пользователю в Telegram
-    chat_id = domofon.user.telegram_id  # Получаем ID чата пользователя
-    message_text = "Кто-то звонит в домофон!"
-    button_open = {"text": "Открыть", "callback_data": f"open_{notification.domofon_id}_{notification.tenant_id}"}
-
-    # Формируем клавиатуру
-    keyboard = {
-        "inline_keyboard": [[button_open]]
-    }
-
-    # Отправляем сообщение
-    requests.post(f'https://api.telegram.org/bot{TELEGRAM_API_TOKEN}/sendPhoto', data={
-        'chat_id': chat_id,
-        'photo': photo_url,
-        'caption': message_text,
-        'reply_markup': json.dumps(keyboard)
-    })
-
-    return {"detail": "Уведомление отправлено"}
-
-@app.post("/callback/")
-async def handle_callback(callback_data: dict):
-    user = session.query(models.User)
-    # Обработка нажатия кнопки
-    domofon_id = callback_data.get("callback_data").split("_")[1]  # Извлекаем ID домофона из callback_data
-    tenant_id = callback_data.get("callback_data").split("_")[2]
-
-    # Проверяем, существует ли домофон
-    domofon = session.query(models.Domofon).filter_by(domofon_id=domofon_id, user_id=tenant_id).first()
-    if not domofon:
-        raise HTTPException(status_code=404, detail="Домофон не найден или недоступен")
-
-    # Отправляем команду на открытие двери
-    door_id = domofon_id # Замените на реальный ID двери, если необходимо
-    payload = json.dumps({'door_id': door_id})
-    response = requests.post(f'{DOMOFON_API_URL}domo.domofon/{domofon_id}/open?tenant_id={tenant_id}', headers=headers, data=payload)
-
-    if response.status_code == 200:
-        return {"detail": "Дверь успешно открыта"}
+@bot.message_handler(content_types=['text'])
+def handle_text(message):
+    text = message.text
+    
+    if text == 'Список домофонов':
+        list_domofons(message)
     else:
-        raise HTTPException(status_code=500, detail="Ошибка при открытии двери")
-
-
-if __name__ == "__main__":
-    import uvicorn
-    uvicorn.run(app, host="0.0.0.0", port=8000)
-
-
+        bot.send_message(message.chat.id, 'Я не знаю такой команды.\nВведите /help, чтобы узнать список доступных команд.')
 
 bot.polling(none_stop=True)

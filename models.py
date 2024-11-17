@@ -7,8 +7,8 @@ Base = declarative_base()
 class User(Base):
     __tablename__ = 'users'
 
-    phone_number = Column(String, unique=True, nullable=False)
-    tenant_id = Column(Integer, nullable=False, primary_key=True)
+    phone_number = Column(String, unique=True, nullable=False, primary_key=True)
+    tenant_id = Column(Integer, nullable=False)
     telegram_id = Column(Integer, unique=True, nullable=False)
     
     domofons = relationship("Domofon", back_populates="user")
