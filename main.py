@@ -48,6 +48,16 @@ def handle_contact(message):
     # Получаем квартиры и домофоны
     add_domofons(user)
 
+
+def get_tenant_id(phone_number):
+    payload = json.dumps({'phone' : phone_number})
+    response = requests.request("POST", f'{DOMOFON_API_URL}check-tenant', headers=headers, data=payload)
+    if response.status_code == 200:
+        return response.json()['tenant_id']
+    else:
+        return None
+
+
 def add_domofons(user):
     tenant_id = user.tenant_id
 
@@ -121,15 +131,16 @@ def get_camera_snapshot(message):
 
     response = requests.request("POST", f'{DOMOFON_API_URL}domo.domofon/urlsOnType?tenant_id={tenant_id}', headers=headers, data=payload)
 
-    photo = response.json()[0]['jpeg']
+    photo1 = response.json()[0]['jpeg']
+    photo2 = response.json()[0]['alt_jpeg']
     
-    if not photo:
+    if not photo1 or not photo2:
         bot.send_message(message.from_user.id, 'У домофона нет камер.')
         return
 
     if response.status_code == 200:
-        snapshot_url = photo
-        bot.send_photo(message.chat.id, photo=snapshot_url)
+        snapshot_url = [telebot.types.InputMediaPhoto(photo1), telebot.types.InputMediaPhoto(photo2)]
+        bot.send_media_group(message.from_user.id, media=snapshot_url)
     else:
         error_message = 'Ошибка получения снимка.'
         bot.send_message(message.chat.id, error_message)
