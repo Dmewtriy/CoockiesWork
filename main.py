@@ -1,10 +1,12 @@
-﻿import telebot
+﻿from fastapi import FastAPI, HTTPException
+import telebot
 import requests
 import json
 from dotenv import load_dotenv
 import os
 from database import session
 import models
+from pydantic import BaseModel
 
 load_dotenv()
 
@@ -14,6 +16,8 @@ DOMOFON_API_URL = os.getenv('DOMOFON_API_URL')
 
 # Инициализация бота
 bot = telebot.TeleBot(TELEGRAM_API_TOKEN)
+
+app = FastAPI()
 
 headers = {'x-api-key' : 'SecretToken', 'Content-Type' : 'application/json'}
 
@@ -182,6 +186,75 @@ def open_domofon(message):
         error_message = 'Ошибка при открытии двери.'
         bot.send_message(message.chat.id, error_message)
 
+
+class CallNotification(BaseModel):
+    domofon_id: int
+    tenant_id: int
+
+@app.post("/notify_call/")
+async def notify_call(notification: CallNotification):
+    # Проверяем, существует ли домофон и доступен ли он для пользователя
+    domofon = session.query(models.Domofon).filter_by(domofon_id=notification.domofon_id, user_id=notification.tenant_id).first()
+    if not domofon:
+        raise HTTPException(status_code=404, detail="Домофон не найден или недоступен")
+
+    # Получаем снимок с камеры домофона
+    payload = json.dumps({'intercoms_id': [notification.domofon_id], 'media_type': ['JPEG']})
+    response = requests.post(f'{DOMOFON_API_URL}domo.domofon/urlsOnType?tenant_id={notification.tenant_id}', headers=headers, data=payload)
+
+    if response.status_code != 200:
+        raise HTTPException(status_code=500, detail="Ошибка получения снимка с камеры")
+
+    photo_url = response.json()[0]['jpeg']
+    if not photo_url:
+        raise HTTPException(status_code=404, detail="У домофона нет камер")
+
+    # Отправляем сообщение пользователю в Telegram
+    chat_id = domofon.user.telegram_id  # Получаем ID чата пользователя
+    message_text = "Кто-то звонит в домофон!"
+    button_open = {"text": "Открыть", "callback_data": f"open_{notification.domofon_id}_{notification.tenant_id}"}
+
+    # Формируем клавиатуру
+    keyboard = {
+        "inline_keyboard": [[button_open]]
+    }
+
+    # Отправляем сообщение
+    requests.post(f'https://api.telegram.org/bot{TELEGRAM_API_TOKEN}/sendPhoto', data={
+        'chat_id': chat_id,
+        'photo': photo_url,
+        'caption': message_text,
+        'reply_markup': json.dumps(keyboard)
+    })
+
+    return {"detail": "Уведомление отправлено"}
+
+@app.post("/callback/")
+async def handle_callback(callback_data: dict):
+    user = session.query(models.User)
+    # Обработка нажатия кнопки
+    domofon_id = callback_data.get("callback_data").split("_")[1]  # Извлекаем ID домофона из callback_data
+    tenant_id = callback_data.get("callback_data").split("_")[2]
+
+    # Проверяем, существует ли домофон
+    domofon = session.query(models.Domofon).filter_by(domofon_id=domofon_id, user_id=tenant_id).first()
+    if not domofon:
+        raise HTTPException(status_code=404, detail="Домофон не найден или недоступен")
+
+    # Отправляем команду на открытие двери
+    door_id = domofon_id # Замените на реальный ID двери, если необходимо
+    payload = json.dumps({'door_id': door_id})
+    response = requests.post(f'{DOMOFON_API_URL}domo.domofon/{domofon_id}/open?tenant_id={tenant_id}', headers=headers, data=payload)
+
+    if response.status_code == 200:
+        return {"detail": "Дверь успешно открыта"}
+    else:
+        raise HTTPException(status_code=500, detail="Ошибка при открытии двери")
+
+
+if __name__ == "__main__":
+    import uvicorn
+    uvicorn.run(app, host="0.0.0.0", port=8000)
 
 
 
