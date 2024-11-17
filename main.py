@@ -205,8 +205,9 @@ async def notify_call(notification: CallNotification):
     if response.status_code != 200:
         raise HTTPException(status_code=500, detail="Ошибка получения снимка с камеры")
 
-    photo_url = response.json()[0]['jpeg']
-    if not photo_url:
+    photo_url1 = response.json()[0]['jpeg']
+    photo_url2 = response.json()[0]['alt_jpeg']
+    if not photo_url1 or not photo_url2:
         raise HTTPException(status_code=404, detail="У домофона нет камер")
 
     # Отправляем сообщение пользователю в Telegram
